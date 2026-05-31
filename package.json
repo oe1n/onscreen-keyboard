@@ -1,0 +1,57 @@
+{
+  "name": "onscreen-keyboard",
+  "version": "1.0.0",
+  "description": "Virtual MIDI on-screen keyboard for macOS",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc && mkdir -p dist/renderer && cp src/renderer/index.html src/renderer/styles.css dist/renderer/",
+    "start": "npm run build && electron .",
+    "rebuild": "electron-rebuild -f",
+    "postinstall": "electron-rebuild -f || true",
+    "dist": "npm run build && electron-builder --mac dir"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^3.6.0",
+    "@types/node": "^20.0.0",
+    "electron": "^30.0.0",
+    "electron-builder": "^24.13.3",
+    "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "easymidi": "^3.1.0"
+  },
+  "build": {
+    "appId": "com.oein.onscreen-keyboard",
+    "productName": "OnScreen Keyboard",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json",
+      "!node_modules/**/{test,tests,__tests__,docs,example,examples}/**",
+      "!node_modules/**/*.{md,markdown,ts,map}",
+      "!node_modules/**/.bin/**"
+    ],
+    "mac": {
+      "category": "public.app-category.music",
+      "target": [
+        {
+          "target": "dir",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "identity": null
+    },
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/@julusian/midi/**/*",
+      "node_modules/easymidi/**/*"
+    ]
+  }
+}

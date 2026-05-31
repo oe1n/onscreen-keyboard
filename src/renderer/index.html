@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>OnScreen Keyboard</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="container">
+    <div id="header">
+      <div class="header-section">
+        <span class="label">Octave</span>
+        <span id="octave-value" class="value">4</span>
+      </div>
+      <div class="header-section center">
+        <span id="title">OnScreen Keyboard · Virtual MIDI</span>
+      </div>
+      <div class="header-section right">
+        <span class="label">Sustain</span>
+        <span id="sustain-value" class="value off">OFF</span>
+      </div>
+    </div>
+    <div id="piano"></div>
+    <div id="footer">
+      <span>Z / ⇧L / ←: octave down</span>
+      <span>X / ⇧R / →: octave up</span>
+      <span>Tab: sustain</span>
+      <span>⌘K / Esc: hide</span>
+    </div>
+  </div>
+  <script src="renderer.js"></script>
+</body>
+</html>
