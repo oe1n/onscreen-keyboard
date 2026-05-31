@@ -40,6 +40,7 @@ let sustainOn = false;
 const heldKeys = new Set<string>();      // keys currently physically down
 const keyToNote = new Map<string, number>(); // key code → midi note currently sounding
 const keyElements = new Map<string, HTMLElement>();
+let mouseHeldDef: KeyDef | null = null;
 
 const pianoEl  = document.getElementById('piano')!;
 const octaveEl = document.getElementById('octave-value')!;
@@ -140,6 +141,7 @@ function releaseAll() {
   keyToNote.forEach((midi) => window.midi.noteOff(midi));
   keyToNote.clear();
   heldKeys.clear();
+  mouseHeldDef = null;
   document.querySelectorAll('.active').forEach(el => el.classList.remove('active'));
   if (sustainOn) setSustain(false);
 }
@@ -213,23 +215,41 @@ document.addEventListener('keyup', (e) => {
 window.addEventListener('blur', () => releaseAll());
 window.midi.onReleaseAll(() => releaseAll());
 
-// Mouse interaction on the rendered piano keys.
-pianoEl.addEventListener('mousedown', (e) => {
-  const target = (e.target as HTMLElement).closest('.white-key, .black-key') as HTMLElement | null;
-  const code = target?.dataset.code;
-  if (!code) return;
-  const def = KEY_MAP.find(k => k.code === code);
+// Mouse interaction: click + drag glides between keys (D→E releases D, plays E).
+function keyDefFromEvent(target: EventTarget | null): KeyDef | null {
+  const el = (target as HTMLElement | null)?.closest?.(
+    '.white-key, .black-key'
+  ) as HTMLElement | null;
+  const code = el?.dataset.code;
+  if (!code) return null;
+  return KEY_MAP.find(k => k.code === code) ?? null;
+}
+
+function setMouseKey(def: KeyDef | null) {
+  if (mouseHeldDef === def) return;
+  if (mouseHeldDef) releaseKey(mouseHeldDef);
+  mouseHeldDef = def;
   if (def) playKey(def);
+}
+
+pianoEl.addEventListener('mousedown', (e) => {
+  const def = keyDefFromEvent(e.target);
+  if (def) {
+    setMouseKey(def);
+    e.preventDefault();
+  }
 });
-pianoEl.addEventListener('mouseup', (e) => {
-  const target = (e.target as HTMLElement).closest('.white-key, .black-key') as HTMLElement | null;
-  const code = target?.dataset.code;
-  if (!code) return;
-  const def = KEY_MAP.find(k => k.code === code);
-  if (def) releaseKey(def);
+
+pianoEl.addEventListener('mouseover', (e) => {
+  if (e.buttons !== 1) return;
+  const def = keyDefFromEvent(e.target);
+  if (def) setMouseKey(def);
 });
-pianoEl.addEventListener('mouseleave', () => {
-  KEY_MAP.forEach(def => releaseKey(def));
+
+pianoEl.addEventListener('mouseleave', (e) => {
+  if (e.buttons === 1) setMouseKey(null);
 });
+
+document.addEventListener('mouseup', () => setMouseKey(null));
 
 buildPiano();
