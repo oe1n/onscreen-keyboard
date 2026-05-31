@@ -1,9 +1,10 @@
-import { app, BrowserWindow, globalShortcut, ipcMain, screen } from 'electron';
+import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, screen, Tray } from 'electron';
 import * as path from 'path';
 import { Output } from 'easymidi';
 
 let mainWindow: BrowserWindow | null = null;
 let midiOutput: Output | null = null;
+let tray: Tray | null = null;
 
 const WIN_WIDTH = 920;
 const WIN_HEIGHT = 230;
@@ -72,6 +73,18 @@ function toggleWindow() {
   }
 }
 
+function createTray() {
+  tray = new Tray(nativeImage.createEmpty());
+  tray.setTitle('🎹');
+  tray.setToolTip('OnScreen Keyboard');
+  const menu = Menu.buildFromTemplate([
+    { label: 'Toggle Keyboard   ⌘K', click: toggleWindow },
+    { type: 'separator' },
+    { label: 'Quit OnScreen Keyboard', click: () => app.quit() },
+  ]);
+  tray.setContextMenu(menu);
+}
+
 app.whenReady().then(() => {
   try {
     midiOutput = new Output('OnScreen Keyboard', true);
@@ -81,6 +94,7 @@ app.whenReady().then(() => {
   }
 
   createWindow();
+  createTray();
 
   const ok = globalShortcut.register('CommandOrControl+K', toggleWindow);
   if (!ok) console.error('Failed to register Cmd+K shortcut');

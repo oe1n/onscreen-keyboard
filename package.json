@@ -1,6 +1,6 @@
 {
   "name": "onscreen-keyboard",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Virtual MIDI on-screen keyboard for macOS",
   "main": "dist/main.js",
   "scripts": {
