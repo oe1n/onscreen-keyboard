@@ -28,5 +28,7 @@
     <string>Copyright © 2026 oein. All rights reserved.</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSAccessibilityUsageDescription</key>
+    <string>OnScreen Keyboard needs Accessibility access to intercept piano-mapped key presses globally and route them to MIDI instead of the focused app.</string>
 </dict>
 </plist>

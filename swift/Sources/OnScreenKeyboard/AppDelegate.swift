@@ -1,6 +1,11 @@
 import AppKit
+import ApplicationServices
 import CoreGraphics
+import IOKit.hid
 import SwiftUI
+import os
+
+private let log = Logger(subsystem: "com.oein.onscreen-keyboard", category: "app")
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panel: FloatingPanel!
@@ -24,8 +29,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         do {
             midi = try MIDIEngine()
+            log.info(" MIDI source created")
         } catch {
-            NSLog("MIDI init failed: \(error)")
+            log.info(" MIDI init failed: \(error)")
         }
 
         model = OSKModel(midi: midi)
@@ -36,12 +42,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         status.onToggle = { [weak self] in self?.toggle() }
         status.onQuit = { NSApp.terminate(nil) }
 
+        let trusted = isAccessibilityTrusted(prompt: true)
+        log.info(" Accessibility trusted: \(trusted)")
+        guard trusted else {
+            showPermissionAlert(.accessibility)
+            return
+        }
+
+        // macOS 10.15+: a CGEventTap in .defaultTap mode on key events also requires
+        // Input Monitoring. Without it, tapCreate returns a valid CFMachPort but no
+        // events are ever delivered — the silent-fail mode that wasted us hours.
+        let inputMonitoring = IOHIDCheckAccess(kIOHIDRequestTypeListenEvent)
+        log.info(" Input Monitoring access: \(inputMonitoring.rawValue, privacy: .public)")
+        if inputMonitoring != kIOHIDAccessTypeGranted {
+            _ = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
+            showPermissionAlert(.inputMonitoring)
+            return
+        }
+
         tap = KeyTap()
         tap.onEvent = { [weak self] type, event in
-            self?.handle(type: type, event: event) ?? event
+            // handle() returns nil to consume the event; only fall back to `event`
+            // when self is gone. The previous `?? event` form folded "consume" and
+            // "self gone" into the same pass-through, so piano keys leaked through.
+            guard let self else { return event }
+            return self.handle(type: type, event: event)
         }
-        if !tap.start() {
-            promptForInputMonitoring()
+        if tap.start() {
+            log.info(" Event tap started")
+        } else {
+            log.info(" Event tap failed to start")
+            showPermissionAlert(.accessibility)
         }
     }
 
@@ -52,14 +83,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Window
 
     private func toggle() {
-        if panel.isVisible {
+        // Drive state from our own flag, not panel.isVisible (which can lag
+        // or stay true if a previous orderOut hadn't committed yet).
+        if panelVisible {
             model.releaseAll()
             panel.orderOut(nil)
             panelVisible = false
+            log.info("toggle → hidden")
         } else {
             positionOnCursorDisplay()
             panel.orderFrontRegardless()
             panelVisible = true
+            log.info("toggle → visible")
         }
     }
 
@@ -95,8 +130,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let flags = event.flags
         let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
 
+        log.info("keyDown kc=\(keyCode, privacy: .public) cmd=\(flags.contains(.maskCommand), privacy: .public) visible=\(self.panelVisible, privacy: .public)")
+
         // Cmd+K always toggles the panel.
         if keyCode == KeyMap.kKey && flags.contains(.maskCommand) {
+            log.info("Cmd+K detected → dispatching toggle")
             DispatchQueue.main.async { [weak self] in self?.toggle() }
             return nil
         }
@@ -104,12 +142,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // When panel is hidden, only Cmd+K is intercepted.
         guard panelVisible else { return event }
 
-        // Don't intercept piano keys used as modifier shortcuts.
-        if flags.contains(.maskCommand) || flags.contains(.maskControl) || flags.contains(.maskAlternate) {
-            return event
-        }
-
-        // Piano keys (consume).
+        // Piano keys.
         if let def = KeyMap.byKeyCode[keyCode] {
             if !isRepeat {
                 DispatchQueue.main.async { [weak self] in
@@ -119,7 +152,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return nil
         }
 
-        // Octave / sustain / escape (consume).
+        // Octave / sustain / escape — consume only these.
         switch keyCode {
         case KeyMap.zKey, KeyMap.leftArrow:
             if !isRepeat { dispatchModel { $0.shiftOctave(-1) } }
@@ -131,9 +164,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if !isRepeat { dispatchModel { $0.setSustain(true) } }
             return nil
         case KeyMap.escapeKey:
-            DispatchQueue.main.async { [weak self] in self?.toggle() }
+            // When the panel is up, ESC fully quits the app.
+            DispatchQueue.main.async { NSApp.terminate(nil) }
             return nil
         default:
+            // Not a piano/control key — pass through to the focused app.
             return event
         }
     }
@@ -147,19 +182,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             dispatchModel { $0.releaseKey(keyCode: keyCode) }
             return nil
         }
-
         if keyCode == KeyMap.tabKey {
             dispatchModel { $0.setSustain(false) }
             return nil
         }
-
-        // Swallow keyUp for keys we consumed on keyDown so the host app doesn't see them.
+        // Swallow keyUp for special keys whose keyDown we consumed,
+        // so the focused app doesn't see a stray release.
         if keyCode == KeyMap.zKey || keyCode == KeyMap.xKey ||
            keyCode == KeyMap.leftArrow || keyCode == KeyMap.rightArrow ||
            keyCode == KeyMap.escapeKey {
             return nil
         }
-
         return event
     }
 
@@ -195,23 +228,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Permission helper
 
-    private func promptForInputMonitoring() {
-        let alert = NSAlert()
-        alert.messageText = "Input Monitoring permission required"
-        alert.informativeText = """
-        OnScreen Keyboard needs Input Monitoring access to capture key \
-        presses while another app is focused.
+    private func isAccessibilityTrusted(prompt: Bool) -> Bool {
+        let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
+        let options: CFDictionary = [key: prompt] as CFDictionary
+        return AXIsProcessTrustedWithOptions(options)
+    }
 
-        Open System Settings → Privacy & Security → Input Monitoring \
-        and enable OnScreen Keyboard, then relaunch the app.
+    private enum PermissionKind {
+        case accessibility
+        case inputMonitoring
+
+        var title: String {
+            switch self {
+            case .accessibility:   return "Accessibility (손쉬운 사용) permission required"
+            case .inputMonitoring: return "Input Monitoring (입력 모니터링) permission required"
+            }
+        }
+        var settingsURL: URL? {
+            switch self {
+            case .accessibility:
+                return URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+            case .inputMonitoring:
+                return URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")
+            }
+        }
+    }
+
+    private func showPermissionAlert(_ kind: PermissionKind) {
+        let alert = NSAlert()
+        alert.messageText = kind.title
+        alert.informativeText = """
+        OnScreen Keyboard needs BOTH Accessibility AND Input Monitoring to \
+        intercept piano-mapped keys globally and route them to MIDI instead \
+        of the focused app.
+
+        Steps:
+        1. Open the System Settings pane below.
+        2. Toggle ON OnScreen Keyboard. \
+           If it's already on but the app was just rebuilt, REMOVE it (–) and \
+           let the next launch re-add it — toggling alone won't refresh the \
+           ad-hoc code signature.
+        3. Quit and relaunch this app.
         """
         alert.addButton(withTitle: "Open System Settings")
         alert.addButton(withTitle: "Quit")
         let response = alert.runModal()
-        if response == .alertFirstButtonReturn {
-            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent") {
-                NSWorkspace.shared.open(url)
-            }
+        if response == .alertFirstButtonReturn, let url = kind.settingsURL {
+            NSWorkspace.shared.open(url)
         }
         NSApp.terminate(nil)
     }
